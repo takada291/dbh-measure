@@ -1,0 +1,23 @@
+{
+  "name": "胸高直径",
+  "short_name": "胸高直径",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#222222",
+  "theme_color": "#28a745",
+  "scope": "./",
+  "icons": [
+    {
+      "src": "icon-dbh.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-dbh.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

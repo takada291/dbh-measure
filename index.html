@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>胸高直径</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#28a745">
+    
+    <style>
+        body {
+            margin: 0; overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #222; color: white;
+            touch-action: none; /* スワイプによるリロード防止 */
+        }
+
+        /* カメラとキャンバス */
+        #camera-view, #photo-canvas {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; z-index: 1;
+        }
+        #photo-canvas { z-index: 2; display: none; background: #000; }
+
+        /* 🌟 十字の視準（ガイド）コンテナ */
+        #guide-wrapper {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 5; display: none;
+        }
+
+        /* 視準(たて) */
+        #guide-v {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 3px; height: 300px; background-color: #ff3333;
+            box-shadow: 0 0 3px rgba(0,0,0,0.5);
+        }
+        /* たての目印（上下の横線） */
+        #guide-v::before, #guide-v::after {
+            content: ''; position: absolute; left: -15px; width: 33px; height: 3px;
+            background-color: #ff3333; box-shadow: 0 0 3px rgba(0,0,0,0.5);
+        }
+        #guide-v::before { top: 0; }
+        #guide-v::after { bottom: 0; }
+
+        /* 視準(よこ) */
+        #guide-h {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            height: 3px; width: 300px; background-color: #00bfff;
+            box-shadow: 0 0 3px rgba(0,0,0,0.5);
+        }
+        /* よこの目印（左右の縦線） */
+        #guide-h::before, #guide-h::after {
+            content: ''; position: absolute; top: -15px; height: 33px; width: 3px;
+            background-color: #00bfff; box-shadow: 0 0 3px rgba(0,0,0,0.5);
+        }
+        #guide-h::before { left: 0; }
+        #guide-h::after { right: 0; }
+
+        /* ドラッグ用の中心ハンドル */
+        #drag-handle {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 60px; height: 60px; border-radius: 50%;
+            background-color: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255,255,255,0.6);
+            cursor: move; z-index: 10;
+        }
+        #drag-handle::after {
+            content: '移動'; position: absolute; top: 65px; left: 50%;
+            transform: translateX(-50%); font-size: 0.7rem; color: #fff;
+            text-shadow: 1px 1px 2px #000; pointer-events: none;
+        }
+
+        /* センターガイド（撮影前の照準） */
+        #aim-guide {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px; height: 40px; border: 2px solid rgba(255,255,255,0.7);
+            border-radius: 50%; z-index: 3; pointer-events: none;
+        }
+
+        /* UIパネル（下部） */
+        .ui-panel {
+            position: absolute; bottom: 0; left: 0; width: 100%;
+            padding: 20px 15px 35px 15px; box-sizing: border-box;
+            background: rgba(0, 0, 0, 0.85); z-index: 20;
+            display: flex; flex-direction: column; gap: 15px;
+            border-top: 1px solid #444;
+        }
+
+        /* 結果表示エリア */
+        .result-area {
+            display: flex; justify-content: space-between; align-items: center;
+            background: #fff; color: #333; padding: 15px; border-radius: 10px;
+        }
+        .result-title { font-weight: bold; font-size: 1.2rem; }
+        .result-val { font-size: 2.8rem; font-weight: bold; color: #e67e22; }
+        .unit { font-size: 1.2rem; color: #666; font-weight: normal; }
+
+        /* コントロール群 */
+        .control-row {
+            display: flex; align-items: center; gap: 10px;
+        }
+        .control-label {
+            width: 90px; font-size: 0.9rem; font-weight: bold;
+        }
+        select {
+            font-size: 1.1rem; padding: 5px; border-radius: 5px; border: 1px solid #ccc;
+        }
+        
+        /* スライダー設定 */
+        input[type="range"] {
+            flex-grow: 1; height: 8px; border-radius: 5px; outline: none;
+            -webkit-appearance: none; background: #555;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none;
+            width: 25px; height: 25px; border-radius: 50%; cursor: pointer;
+        }
+        #slider-v::-webkit-slider-thumb { background: #ff3333; }
+        #slider-h::-webkit-slider-thumb { background: #00bfff; }
+
+        /* ボタン */
+        button {
+            padding: 15px; font-size: 1.2rem; border: none; border-radius: 8px;
+            cursor: pointer; font-weight: bold; color: white; width: 100%;
+        }
+        button:active { transform: scale(0.98); }
+        .btn-green { background-color: #28a745; }
+        .btn-gray { background-color: #6c757d; }
+        
+        /* 撮影前UIと撮影後UIの切り替え用 */
+        #mode-measure { display: none; }
+    </style>
+</head>
+<body>
+
+    <!-- 映像・画像エリア -->
+    <video id="camera-view" autoplay playsinline muted></video>
+    <div id="aim-guide"></div>
+    <canvas id="photo-canvas"></canvas>
+
+    <!-- 🌟 十字視準レイヤー -->
+    <div id="guide-wrapper">
+        <div id="guide-v"></div>
+        <div id="guide-h"></div>
+        <div id="drag-handle"></div>
+    </div>
+
+    <!-- 📸 撮影モードのUI -->
+    <div class="ui-panel" id="mode-camera">
+        <div style="text-align:center; margin-bottom:10px; font-weight:bold; color:#ccc;">
+            木とポールを画面中央に収めて撮影
+        </div>
+        <button class="btn-green" onclick="takePhoto()">📸 撮影する (画面を固定)</button>
+    </div>
+
+    <!-- 📏 測定モードのUI -->
+    <div class="ui-panel" id="mode-measure">
+        
+        <div class="result-area">
+            <div>
+                <div class="result-title">胸高直径 (DBH)</div>
+                <div style="margin-top:5px;">
+                    <select id="ref-len" onchange="calculateDBH()">
+                        <option value="20">基準: 20cm</option>
+                        <option value="40" selected>基準: 40cm</option>
+                        <option value="60">基準: 60cm</option>
+                        <option value="80">基準: 80cm</option>
+                    </select>
+                </div>
+            </div>
+            <div class="result-val"><span id="dbh-val">0.0</span> <span class="unit">cm</span></div>
+        </div>
+
+        <div class="control-row" style="color:#ff3333;">
+            <div class="control-label">たて (基準)</div>
+            <input type="range" id="slider-v" min="50" max="1500" value="300" oninput="updateGuides()">
+        </div>
+        
+        <div class="control-row" style="color:#00bfff;">
+            <div class="control-label">よこ (幹幅)</div>
+            <input type="range" id="slider-h" min="50" max="1500" value="300" oninput="updateGuides()">
+        </div>
+
+        <button class="btn-gray" onclick="retakePhoto()" style="margin-top:5px;">🔄 撮り直す</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('camera-view');
+        const canvas = document.getElementById('photo-canvas');
+        const ctx = canvas.getContext('2d');
+        
+        const guideWrapper = document.getElementById('guide-wrapper');
+        const guideV = document.getElementById('guide-v');
+        const guideH = document.getElementById('guide-h');
+        
+        const sliderV = document.getElementById('slider-v');
+        const sliderH = document.getElementById('slider-h');
+        const refSelect = document.getElementById('ref-len');
+        const dbhDisplay = document.getElementById('dbh-val');
+
+        // --- カメラ起動 ---
+        async function startCamera() {
+            try {
+                // フルHD以上の高解像度を要求
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                alert("カメラの起動に失敗しました: " + err.message);
+            }
+        }
+        window.onload = startCamera;
+
+        // --- 撮影処理 ---
+        function takePhoto() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            // 映像をキャンバスに描画して静止画化
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // UIの切り替え
+            video.style.display = 'none';
+            document.getElementById('aim-guide').style.display = 'none';
+            document.getElementById('mode-camera').style.display = 'none';
+            
+            canvas.style.display = 'block';
+            guideWrapper.style.display = 'block';
+            document.getElementById('mode-measure').style.display = 'flex';
+
+            // 十字を画面中央にリセット
+            guideWrapper.style.left = '50%';
+            guideWrapper.style.top = '40%'; // 下部にUIがあるため少し上に配置
+
+            // 画面サイズに合わせてスライダーの最大値を調整
+            const maxDimension = Math.max(window.innerWidth, window.innerHeight) * 1.5;
+            sliderV.max = maxDimension;
+            sliderH.max = maxDimension;
+
+            updateGuides();
+        }
+
+        // --- 撮り直し処理 ---
+        function retakePhoto() {
+            video.style.display = 'block';
+            document.getElementById('aim-guide').style.display = 'block';
+            document.getElementById('mode-camera').style.display = 'flex';
+            
+            canvas.style.display = 'none';
+            guideWrapper.style.display = 'none';
+            document.getElementById('mode-measure').style.display = 'none';
+            
+            // iOS対策で念のため再生
+            if (video.paused) video.play().catch(e => console.log(e));
+        }
+
+        // --- スライダー操作と計算 ---
+        function updateGuides() {
+            const valV = sliderV.value;
+            const valH = sliderH.value;
+            
+            // CSSの高さを更新 (px)
+            guideV.style.height = valV + 'px';
+            guideH.style.width = valH + 'px';
+            
+            calculateDBH();
+        }
+
+        function calculateDBH() {
+            const pixelV = parseFloat(sliderV.value);
+            const pixelH = parseFloat(sliderH.value);
+            const refCm = parseFloat(refSelect.value); // 例: 40cm
+            
+            if(pixelV === 0) return;
+
+            // 計算: (横ピクセル / 縦ピクセル) * 基準の長さ(cm)
+            const dbh = (pixelH / pixelV) * refCm;
+            
+            dbhDisplay.textContent = dbh.toFixed(1);
+        }
+
+        // --- 🌟 十字視準のドラッグ（移動）処理 ---
+        const dragHandle = document.getElementById('drag-handle');
+        let isDragging = false;
+        let startX, startY, initialLeft, initialTop;
+
+        dragHandle.addEventListener('touchstart', dragStart, {passive: false});
+        dragHandle.addEventListener('mousedown', dragStart);
+        document.addEventListener('touchmove', dragMove, {passive: false});
+        document.addEventListener('mousemove', dragMove);
+        document.addEventListener('touchend', dragEnd);
+        document.addEventListener('mouseup', dragEnd);
+
+        function dragStart(e) {
+            e.preventDefault();
+            isDragging = true;
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            startX = clientX;
+            startY = clientY;
+            
+            // 現在のleft/topを取得
+            const rect = guideWrapper.getBoundingClientRect();
+            // 親要素（body）から見た相対位置
+            initialLeft = guideWrapper.offsetLeft;
+            initialTop = guideWrapper.offsetTop;
+        }
+
+        function dragMove(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            
+            const dx = clientX - startX;
+            const dy = clientY - startY;
+            
+            guideWrapper.style.left = (initialLeft + dx) + 'px';
+            guideWrapper.style.top = (initialTop + dy) + 'px';
+        }
+
+        function dragEnd() {
+            isDragging = false;
+        }
+
+        // --- PWA Service Worker 登録 ---
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('./sw.js');
+            });
+        }
+    </script>
+</body>
+</html>
